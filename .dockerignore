@@ -1,0 +1,13 @@
+# Lista blanca: nada de .env, .venv, odoo.conf local (tiene contraseñas) ni datos.
+*
+!custom_addons
+!docker/odoo.conf
+
+**/.git
+**/__pycache__
+**/*.pyc
+
+# Sueltos en la raíz de custom_addons: .zip, .pdf de comprobantes, etc.
+custom_addons/*.*
+# 2,4 GB de documentación que ningún módulo referencia.
+custom_addons/produccion_manufactura/guia_estructural

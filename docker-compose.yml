@@ -1,0 +1,103 @@
+# =============================================================================
+# Odoo 19 CE — Imperio Real — despliegue en COOLIFY (recurso Docker Compose)
+# =============================================================================
+# Antes de desplegar, en el servidor de Coolify (token clásico solo read:packages):
+#   echo <TOKEN> | docker login ghcr.io -u juanca2918 --password-stdin
+#
+# Coolify genera solo los SERVICE_USER_* / SERVICE_PASSWORD_*. Crear a mano en
+# "Environment Variables":
+#   DOMAIN             dominio del servicio (obligatorio, sin https://)
+#   ODOO_IMAGE_TAG     etiqueta publicada en GHCR
+#   ODOO_DBFILTER      regex de la BD
+#   ODOO_WORKERS       ~1 por cada 6 usuarios simultáneos, sin pasar de (núcleos x 2) + 1
+#   ODOO_LIST_DB       True solo mientras se crea/restaura la BD desde /web/database
+#   PG_SHARED_BUFFERS  ~25 % de la RAM reservada a PostgreSQL
+#
+# Tráfico: Traefik (Coolify) -> odoo:8069 y /websocket -> odoo:8072, por los
+# labels de abajo. Sin nginx: Traefik ya hace TLS, websocket y X-Forwarded-*.
+# Con workers > 0 el websocket solo vive en el puerto gevent (8072).
+# NO poner "Domain" en la UI de Coolify: generaría labels duplicados.
+# Routers con prefijo odoo19 para no chocar con el Odoo 18 si comparten Traefik.
+# Sin Redis: Odoo CE no tiene ningún cliente de Redis, sería un contenedor sin uso.
+# =============================================================================
+
+services:
+  odoo:
+    image: ghcr.io/juanca2918/odoo19-ce:${ODOO_IMAGE_TAG:-siteco-odoo-v1.0}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=$SERVICE_USER_POSTGRES
+      - PGPASSWORD=$SERVICE_PASSWORD_POSTGRES
+      - ODOO_ADMIN_PASSWD=$SERVICE_PASSWORD_64_ODOOMASTER
+      - ODOO_DBFILTER=${ODOO_DBFILTER:-^imperio_real$$}
+      - ODOO_WORKERS=${ODOO_WORKERS:-6}
+      - ODOO_LIST_DB=${ODOO_LIST_DB:-False}
+    volumes:
+      - odoo-data:/var/lib/odoo
+    healthcheck:
+      test: ['CMD', 'curl', '-fs', 'http://127.0.0.1:8069/web/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - default
+      - coolify
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=coolify
+
+      # HTTP -> HTTPS
+      - 'traefik.http.routers.odoo19-http.rule=Host(`${DOMAIN}`)'
+      - traefik.http.routers.odoo19-http.entrypoints=http
+      - traefik.http.routers.odoo19-http.service=odoo19
+      - traefik.http.routers.odoo19-http.middlewares=odoo19-https-redirect
+      - traefik.http.middlewares.odoo19-https-redirect.redirectscheme.scheme=https
+
+      # Web (8069)
+      - 'traefik.http.routers.odoo19.rule=Host(`${DOMAIN}`)'
+      - traefik.http.routers.odoo19.entrypoints=https
+      - traefik.http.routers.odoo19.tls=true
+      - traefik.http.routers.odoo19.tls.certresolver=letsencrypt
+      - traefik.http.routers.odoo19.service=odoo19
+      - traefik.http.services.odoo19.loadbalancer.server.port=8069
+
+      # Websocket (8072)
+      - 'traefik.http.routers.odoo19-ws.rule=Host(`${DOMAIN}`) && PathPrefix(`/websocket`)'
+      - traefik.http.routers.odoo19-ws.entrypoints=https
+      - traefik.http.routers.odoo19-ws.tls=true
+      - traefik.http.routers.odoo19-ws.tls.certresolver=letsencrypt
+      - traefik.http.routers.odoo19-ws.priority=100
+      - traefik.http.routers.odoo19-ws.service=odoo19-ws
+      - traefik.http.services.odoo19-ws.loadbalancer.server.port=8072
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    command: ['postgres', '-c', 'shared_buffers=${PG_SHARED_BUFFERS:-1GB}']
+    # El /dev/shm de 64 MB por defecto hace fallar las consultas en paralelo.
+    shm_size: 256m
+    environment:
+      - POSTGRES_USER=$SERVICE_USER_POSTGRES
+      - POSTGRES_PASSWORD=$SERVICE_PASSWORD_POSTGRES
+      - POSTGRES_DB=postgres
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  coolify:
+    external: true
+
+volumes:
+  odoo-data:
+  db-data:
