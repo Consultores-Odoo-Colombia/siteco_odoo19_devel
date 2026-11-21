@@ -1,0 +1,2 @@
+Módulos propios que la imagen copia a /opt/siteco-addons.
+Los OPL-1 no se suben a este repo público: la imagen del CI sale sin ellos.
