@@ -1,5 +1,7 @@
-# Construye la imagen de Odoo 19 CE y la publica en GHCR en cada push a 19.0
-# (etiquetas 19.0 y 19.0-<sha>) o a mano desde Actions con una etiqueta propia.
+# Construye la imagen de Odoo 19 CE y la publica en GHCR en cada push a
+# despliegue_prod (etiquetas 19.0 y 19.0-<sha>) o a mano desde Actions con una
+# etiqueta propia. La rama 19.0 es espejo de odoo/odoo: no llevar nada propio ahí;
+# para traer Odoo nuevo, fusionar 19.0 en despliegue_prod.
 #
 # OJO: compila solo lo que está en git. Los módulos OPL-1 que no se suben
 # (base_accounting_kit, om_account_*, accounting_pdf_reports...) NO entran en
@@ -8,7 +10,7 @@ name: Docker image
 
 on:
   push:
-    branches: ['19.0']
+    branches: ['despliegue_prod']
   workflow_dispatch:
     inputs:
       tag:
@@ -51,7 +53,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Comprobar que Odoo importa
-        run: docker run --rm --entrypoint python3 "$IMAGE:19.0" -c 'import odoo; print("odoo", odoo.release.version)'
+        run: docker run --rm --entrypoint python3 "$IMAGE:19.0" -c 'from odoo import release; print("odoo", release.version)'
 
       # El paquete vive en la cuenta personal juanca2918, por eso GITHUB_TOKEN no basta:
       # hace falta un PAT con write:packages en los secretos GHCR_USERNAME / GHCR_TOKEN.
